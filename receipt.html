@@ -2,81 +2,197 @@
 <html lang="th">
 <head>
   <meta charset="UTF-8">
-  <title>เว็บแอปออกใบเสร็จ</title>
+  <title>ร้านแม่ดอนโอทอป – ใบเสร็จรับเงิน</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.2/html2pdf.bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <style>
     body {
       font-family: 'Sarabun', sans-serif;
-      padding: 30px;
-      max-width: 600px;
-      margin: auto;
-      background: #fdfcdc;
+      background: #f9f9f9;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
     }
-    h2 {
-      color: #333;
+    .container {
+      background: #fff;
+      padding: 20px;
+      max-width: 800px;
+      width: 100%;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
-    input, button {
+    h1, h2 {
+      text-align: center;
+      margin: 0;
+    }
+    form input, form textarea, form button {
+      width: 100%;
       padding: 10px;
       margin: 5px 0;
+      font-size: 1rem;
+    }
+    .items table {
       width: 100%;
-      box-sizing: border-box;
-      font-size: 16px;
+      border-collapse: collapse;
+      margin: 10px 0;
     }
-    #receipt {
-      margin-top: 20px;
-      padding: 15px;
-      background: #fffbe6;
-      border: 1px dashed #aaa;
+    .items th, .items td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: center;
     }
-    .btn {
-      background-color: #f9c74f;
+    .btn-group button {
+      width: auto;
+      margin: 10px 5px 0 0;
+      padding: 8px 15px;
       border: none;
       cursor: pointer;
     }
-    .btn:hover {
-      background-color: #f9844a;
-      color: white;
+    button.add-item { background: #6c757d; color:#fff; }
+    button.remove-item { background: #dc3545; color:#fff; }
+    button.generate { background: #007bff; color:#fff; }
+    button.pdf { background: #28a745; color:#fff; }
+    button.png { background: #17a2b8; color:#fff; }
+    #receiptBox {
+      margin-top: 20px;
+      padding: 20px;
+      border: 1px dashed #ccc;
+      background: #fff;
+    }
+    @media print {
+      .btn-group, form { display: none; }
+      .container { box-shadow: none; }
     }
   </style>
 </head>
 <body>
-  <h2>ระบบออกใบเสร็จแบบง่าย</h2>
-  <form id="receiptForm">
-    <label>ชื่อลูกค้า:</label>
-    <input type="text" id="customer" required>
+  <div class="container">
+    <h1>ร้านแม่ดอนโอทอป</h1>
+    <h2>ใบเสร็จรับเงิน</h2>
 
-    <label>รายการสินค้า:</label>
-    <input type="text" id="item" required>
+    <form id="form">
+      <input type="text" id="customerName" placeholder="ชื่อลูกค้า" required>
+      <input type="text" id="customerPhone" placeholder="เบอร์โทร" required>
+      <textarea id="customerAddress" rows="2" placeholder="ที่อยู่จัดส่ง" required></textarea>
 
-    <label>ราคา (บาท):</label>
-    <input type="number" id="price" required>
+      <div class="items">
+        <table id="itemsTable">
+          <thead>
+            <tr><th>สินค้า</th><th>จำนวน</th><th>ราคาต่อหน่วย (฿)</th><th>รวม</th><th>จัดการ</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" class="add-item btn add-item">+ เพิ่มสินค้า</button>
+      </div>
 
-    <button class="btn" type="submit">สร้างใบเสร็จ</button>
-  </form>
+      <div style="text-align: right; margin-top:10px;">
+        ยอดรวม: <span id="grandTotal">0.00</span> บาท
+      </div>
 
-  <div id="receipt"></div>
+      <div class="btn-group">
+        <button type="button" class="generate" onclick="generateReceipt()">สร้างใบเสร็จ</button>
+      </div>
+    </form>
+
+    <div id="receiptBox"></div>
+  </div>
 
   <script>
-    document.getElementById("receiptForm").addEventListener("submit", function(e) {
-      e.preventDefault();
+    // เพิ่มสินค้าเริ่มต้นทีละแถว
+    function addItemRow(name='', qty=1, price=0){
+      const tbody = document.querySelector('#itemsTable tbody');
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><input type="text" class="item-name" value="${name}"></td>
+        <td><input type="number" class="item-qty" value="${qty}" min="1"></td>
+        <td><input type="number" class="item-price" value="${price}" min="0" step="0.01"></td>
+        <td class="item-total">0.00</td>
+        <td><button type="button" class="remove-item btn remove-item">X</button></td>`;
+      tbody.appendChild(tr);
+      tr.querySelectorAll('input').forEach(inp=>inp.addEventListener('input', updateTotals));
+      tr.querySelector('.remove-item').onclick = ()=>{tr.remove(); updateTotals();}
+      updateTotals();
+    }
 
-      const name = document.getElementById("customer").value;
-      const item = document.getElementById("item").value;
-      const price = document.getElementById("price").value;
-
-      const today = new Date().toLocaleDateString('th-TH', {
-        year: 'numeric', month: 'long', day: 'numeric'
+    function updateTotals(){
+      let grand = 0;
+      document.querySelectorAll('#itemsTable tbody tr').forEach(tr=>{
+        const q= +tr.querySelector('.item-qty').value;
+        const p= +tr.querySelector('.item-price').value;
+        const tot = q * p;
+        tr.querySelector('.item-total').innerText = tot.toFixed(2);
+        grand += tot;
       });
+      document.getElementById('grandTotal').innerText = grand.toFixed(2);
+    }
 
-      const receiptHTML = `
-        <h3>ใบเสร็จรับเงิน</h3>
-        <p><strong>วันที่:</strong> ${today}</p>
-        <p><strong>ชื่อลูกค้า:</strong> ${name}</p>
-        <p><strong>สินค้า:</strong> ${item}</p>
-        <p><strong>จำนวนเงิน:</strong> ${parseFloat(price).toFixed(2)} บาท</p>
-        <button class="btn" onclick="window.print()">พิมพ์ใบเสร็จ</button>
+    document.querySelector('.add-item').onclick = ()=>addItemRow();
+
+    // ลำดับใบเสร็จอัตโนมัติ
+    function getInvoiceNo(){
+      let no = localStorage.getItem('receiptNo') || '0';
+      no = (+no)+1;
+      localStorage.setItem('receiptNo', no);
+      return '#'+String(no).padStart(3,'0');
+    }
+
+    function generateReceipt(){
+      const name = document.getElementById('customerName').value;
+      const phone = document.getElementById('customerPhone').value;
+      const addr = document.getElementById('customerAddress').value;
+      const date = new Date().toLocaleDateString('th-TH',{day:'numeric',month:'long',year:'numeric'});
+      const invNo = getInvoiceNo();
+      const rows = Array.from(document.querySelectorAll('#itemsTable tbody tr')).map(tr=>{
+        const n = tr.querySelector('.item-name').value;
+        const q = +tr.querySelector('.item-qty').value;
+        const p = +tr.querySelector('.item-price').value;
+        return {n,q,p,total:q*p};
+      });
+      const total = rows.reduce((s,e)=>s+ e.total,0).toFixed(2);
+
+      const lineRows = rows.map(r=>`<tr><td>${r.n}</td><td>${r.q}</td><td>${r.p.toFixed(2)}</td><td>${r.total.toFixed(2)}</td></tr>`).join('');
+
+      const html = `
+        <div id="printArea">
+          <div style="text-align:center">
+            <h2>ร้านแม่ดอนโอทอป</h2>
+            <p>ใบเสร็จรับเงิน เลขที่ ${invNo}</p>
+            <p>วันที่ ${date}</p>
+          </div>
+          <p><strong>ชื่อลูกค้า:</strong> ${name}</p>
+          <p><strong>เบอร์โทร:</strong> ${phone}</p>
+          <p><strong>ที่อยู่จัดส่ง:</strong> ${addr}</p>
+          <table style="width:100%;border-collapse:collapse;margin-top:10px">
+            <thead><tr><th>สินค้า</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>รวม</th></tr></thead>
+            <tbody>${lineRows}</tbody>
+          </table>
+          <h3 style="text-align:right">รวมทั้งสิ้น: ${total} บาท</h3>
+          <div style="text-align:center;margin-top:15px">
+            <button onclick="window.print()" class="generate">พิมพ์</button>
+            <button onclick="downloadPDF()" class="pdf">ดาวน์โหลด PDF</button>
+            <button onclick="downloadPNG()" class="png">ดาวน์โหลด PNG</button>
+          </div>
+        </div>
       `;
-      document.getElementById("receipt").innerHTML = receiptHTML;
-    });
+      document.getElementById('receiptBox').innerHTML = html;
+    }
+
+    function downloadPDF(){
+      const elem = document.getElementById('printArea');
+      html2pdf().from(elem)
+        .set({margin:10,filename:'receipt.pdf', html2canvas:{scale:2}})
+        .save();
+    }
+
+    function downloadPNG(){
+      const elem = document.getElementById('printArea');
+      html2canvas(elem,{scale:2}).then(canvas=>{
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL("image/png");
+        link.download = "receipt.png";
+        link.click();
+      });
+    }
   </script>
 </body>
 </html>
